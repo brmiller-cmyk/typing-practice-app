@@ -40,7 +40,7 @@ if (configStr) {
   measurementId: "G-3V797RQZY3"
   };
   
-  if (externalConfig.apiKey !== "AIzaSyCw51R2h99aDQQJo7cmqFgF80rCGpX_6nc" && externalConfig.apiKey !== undefined) {
+  if (externalConfig.apiKey !== "YOUR_API_KEY" && externalConfig.apiKey !== undefined) {
     app = initializeApp(externalConfig);
     auth = getAuth(app);
     db = getFirestore(app);
