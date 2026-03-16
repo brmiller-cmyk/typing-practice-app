@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { 
   Trophy, 
   Download, 
@@ -8,8 +11,43 @@ import {
   CheckCircle2, 
   Keyboard,
   User,
-  AlertCircle
+  AlertCircle,
+  Cloud
 } from 'lucide-react';
+
+// --- FIREBASE SETUP ---
+const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+let app, auth, db;
+let isFirebaseEnabled = false;
+
+// Initialize Firebase if we are in the Canvas preview, OR if the user provides their Netlify config
+if (configStr) {
+  const firebaseConfig = JSON.parse(configStr);
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  isFirebaseEnabled = true;
+} else {
+  // To enable Auto-Save on Netlify, replace these placeholders with your free Firebase project keys!
+  const externalConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+  };
+  
+  if (externalConfig.apiKey !== "AIzaSyCw51R2h99aDQQJo7cmqFgF80rCGpX_6ncS") {
+    app = initializeApp(externalConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    isFirebaseEnabled = true;
+  } else {
+    console.warn("Auto-save requires Firebase config. Set it up for your live deployment!");
+  }
+}
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'typing-practice-app';
 
 // --- DATA ---
 const PROMPTS = [
@@ -44,6 +82,11 @@ export default function App() {
   const [studentName, setStudentName] = useState('');
   const [isStarted, setIsStarted] = useState(false);
   
+  // Firebase User & Save State
+  const [user, setUser] = useState(null);
+  const [isRestoring, setIsRestoring] = useState(isFirebaseEnabled);
+  const [saveStatus, setSaveStatus] = useState(''); // 'Saving...' or 'Saved'
+  
   // Typing State
   const [currentPromptIndex, setCurrentPromptIndex] = useState(() => Math.floor(Math.random() * PROMPTS.length));
   const [typedText, setTypedText] = useState('');
@@ -67,6 +110,100 @@ export default function App() {
   const typedTextRef = useRef('');
 
   const currentPrompt = PROMPTS[currentPromptIndex];
+
+  // --- FIREBASE AUTO-SAVE LOGIC ---
+  
+  // 1. Silent Authentication
+  useEffect(() => {
+    if (!isFirebaseEnabled || !auth) {
+      setIsRestoring(false);
+      return;
+    }
+    
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Auth Error", e);
+        setIsRestoring(false);
+      }
+    };
+    
+    initAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (!u) setIsRestoring(false);
+    });
+    
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Load Progress from Cloud
+  useEffect(() => {
+    if (!user || !db || !isFirebaseEnabled) return;
+    
+    const userRef = doc(db, 'artifacts', appId, 'users', user.uid, 'saves', 'progress');
+    
+    const unsubscribe = onSnapshot(userRef, (docSnap) => {
+      // Only restore if we haven't actively started a new session
+      if (docSnap.exists() && !isStarted) {
+        const data = docSnap.data();
+        if (data.studentName) setStudentName(data.studentName);
+        if (data.totalActiveSeconds) setTotalActiveSeconds(data.totalActiveSeconds);
+        if (data.history) setHistory(data.history);
+        if (data.currentPromptIndex !== undefined) setCurrentPromptIndex(data.currentPromptIndex);
+        if (data.promptActiveSeconds) setPromptActiveSeconds(data.promptActiveSeconds);
+        if (data.typedText) {
+          setTypedText(data.typedText);
+          typedTextRef.current = data.typedText;
+        }
+        if (data.isStarted) setIsStarted(true);
+      }
+      setIsRestoring(false);
+    }, (err) => {
+      console.error("Load error:", err);
+      setIsRestoring(false);
+    });
+
+    return () => unsubscribe();
+  }, [user, isStarted]);
+
+  // 3. Save Progress to Cloud
+  useEffect(() => {
+    if (!user || !db || !isFirebaseEnabled || isRestoring || !studentName) return;
+
+    const saveProgress = async () => {
+      setSaveStatus('Saving...');
+      try {
+        const userRef = doc(db, 'artifacts', appId, 'users', user.uid, 'saves', 'progress');
+        await setDoc(userRef, {
+          studentName,
+          isStarted,
+          totalActiveSeconds,
+          promptActiveSeconds,
+          typedText,
+          history,
+          currentPromptIndex,
+          lastSaved: new Date().toISOString()
+        }, { merge: true });
+        
+        setSaveStatus('Saved');
+        setTimeout(() => setSaveStatus(''), 2000);
+      } catch (e) {
+        console.error("Save error:", e);
+        setSaveStatus('');
+      }
+    };
+
+    // Debounce saves by 1 second to avoid overwhelming the database while typing
+    const timeoutId = setTimeout(saveProgress, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [user, studentName, isStarted, totalActiveSeconds, promptActiveSeconds, typedText, history, currentPromptIndex, isRestoring]);
 
   // --- TIMER LOGIC ---
   useEffect(() => {
@@ -192,6 +329,17 @@ export default function App() {
 
   // --- RENDERERS ---
 
+  if (isRestoring) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="text-slate-500 font-medium flex items-center gap-3">
+          <span className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></span>
+          <span className="text-xl">Restoring your progress...</span>
+        </div>
+      </div>
+    );
+  }
+
   if (!isStarted) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -264,9 +412,16 @@ export default function App() {
                 <Target size={20} className="text-blue-500" /> 
                 Daily Goal: 20 Minutes
               </h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Time only counts while you are actively typing!
-              </p>
+              <div className="flex items-center gap-3 mt-1">
+                <p className="text-sm text-slate-500">
+                  Time only counts while you are actively typing!
+                </p>
+                {saveStatus && (
+                  <span className="text-xs font-medium text-emerald-500 flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded-full">
+                    <Cloud size={12} /> {saveStatus}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="text-right">
               <div className="text-2xl font-bold font-mono flex items-center justify-end gap-2">
