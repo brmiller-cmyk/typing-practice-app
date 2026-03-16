@@ -30,12 +30,13 @@ if (configStr) {
 } else {
   // To enable Auto-Save on Netlify, replace these placeholders with your free Firebase project keys!
   const externalConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyCw51R2h99aDQQJo7cmqFgF80rCGpX_6nc",
+  authDomain: "typing-practice-30e0d.firebaseapp.com",
+  projectId: "typing-practice-30e0d",
+  storageBucket: "typing-practice-30e0d.firebasestorage.app",
+  messagingSenderId: "938274814431",
+  appId: "1:938274814431:web:c57806b0360347f847ac6a",
+  measurementId: "G-3V797RQZY3"
   };
   
   if (externalConfig.apiKey !== "AIzaSyCw51R2h99aDQQJo7cmqFgF80rCGpX_6ncS") {
