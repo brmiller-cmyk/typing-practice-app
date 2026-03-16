@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -20,7 +20,7 @@ const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config :
 let app, auth, db;
 let isFirebaseEnabled = false;
 
-// Initialize Firebase if we are in the Canvas preview, OR if the user provides their Netlify config
+// Initialize Firebase if we are in the Canvas preview, OR if the user provides their config
 if (configStr) {
   const firebaseConfig = JSON.parse(configStr);
   app = initializeApp(firebaseConfig);
@@ -29,6 +29,7 @@ if (configStr) {
   isFirebaseEnabled = true;
 } else {
   // To enable Auto-Save on Netlify, replace these placeholders with your free Firebase project keys!
+  // Note: If using Vite locally with a .env file, you can change these to use import.meta.env.VITE_FIREBASE_API_KEY etc.
   const externalConfig = {
   apiKey: "AIzaSyCw51R2h99aDQQJo7cmqFgF80rCGpX_6nc",
   authDomain: "typing-practice-30e0d.firebaseapp.com",
@@ -39,13 +40,11 @@ if (configStr) {
   measurementId: "G-3V797RQZY3"
   };
   
-  if (externalConfig.apiKey !== "AIzaSyCw51R2h99aDQQJo7cmqFgF80rCGpX_6ncS") {
+  if (externalConfig.apiKey !== "AIzaSyCw51R2h99aDQQJo7cmqFgF80rCGpX_6nc" && externalConfig.apiKey !== undefined) {
     app = initializeApp(externalConfig);
     auth = getAuth(app);
     db = getFirestore(app);
     isFirebaseEnabled = true;
-  } else {
-    console.warn("Auto-save requires Firebase config. Set it up for your live deployment!");
   }
 }
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'typing-practice-app';
@@ -75,8 +74,7 @@ const PROMPTS = [
 ];
 
 const GOAL_MINUTES = 20;
-const GOAL_SECONDS = GOAL_MINUTES * 60;
-const INACTIVITY_DELAY_MS = 2000; // Stop timer after 2 seconds of no typing
+const INACTIVITY_DELAY_MS = 2000;
 
 export default function App() {
   // User & App State
@@ -86,7 +84,7 @@ export default function App() {
   // Firebase User & Save State
   const [user, setUser] = useState(null);
   const [isRestoring, setIsRestoring] = useState(isFirebaseEnabled);
-  const [saveStatus, setSaveStatus] = useState(''); // 'Saving...' or 'Saved'
+  const [saveStatus, setSaveStatus] = useState(''); 
   
   // Typing State
   const [currentPromptIndex, setCurrentPromptIndex] = useState(() => Math.floor(Math.random() * PROMPTS.length));
@@ -98,7 +96,7 @@ export default function App() {
   const [promptActiveSeconds, setPromptActiveSeconds] = useState(0);
   const [isCurrentlyTyping, setIsCurrentlyTyping] = useState(false);
   
-  // Stats & History
+  // Stats & Progress State
   const [history, setHistory] = useState([]);
   const [showStatsModal, setShowStatsModal] = useState(false);
   const [lastStats, setLastStats] = useState(null);
@@ -113,8 +111,6 @@ export default function App() {
   const currentPrompt = PROMPTS[currentPromptIndex];
 
   // --- FIREBASE AUTO-SAVE LOGIC ---
-  
-  // 1. Silent Authentication
   useEffect(() => {
     if (!isFirebaseEnabled || !auth) {
       setIsRestoring(false);
@@ -144,14 +140,12 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Load Progress from Cloud
   useEffect(() => {
     if (!user || !db || !isFirebaseEnabled) return;
     
     const userRef = doc(db, 'artifacts', appId, 'users', user.uid, 'saves', 'progress');
     
     const unsubscribe = onSnapshot(userRef, (docSnap) => {
-      // Only restore if we haven't actively started a new session
       if (docSnap.exists() && !isStarted) {
         const data = docSnap.data();
         if (data.studentName) setStudentName(data.studentName);
@@ -174,7 +168,6 @@ export default function App() {
     return () => unsubscribe();
   }, [user, isStarted]);
 
-  // 3. Save Progress to Cloud
   useEffect(() => {
     if (!user || !db || !isFirebaseEnabled || isRestoring || !studentName) return;
 
@@ -201,7 +194,6 @@ export default function App() {
       }
     };
 
-    // Debounce saves by 1 second to avoid overwhelming the database while typing
     const timeoutId = setTimeout(saveProgress, 1000);
     return () => clearTimeout(timeoutId);
   }, [user, studentName, isStarted, totalActiveSeconds, promptActiveSeconds, typedText, history, currentPromptIndex, isRestoring]);
@@ -213,7 +205,7 @@ export default function App() {
     timerRef.current = setInterval(() => {
       const now = Date.now();
       const currentLen = typedTextRef.current.length;
-      // If the last keystroke was within our inactivity window, count this second
+      
       if (now - lastKeystrokeTime.current < INACTIVITY_DELAY_MS && currentLen > 0 && currentLen < currentPrompt.length) {
         setTotalActiveSeconds(prev => prev + 1);
         setPromptActiveSeconds(prev => prev + 1);
@@ -228,7 +220,9 @@ export default function App() {
 
   // --- TYPING HANDLERS ---
   const handleInputChange = (e) => {
-    const value = e.target.value;
+    // BUG FIX: Strip out line breaks to prevent letter tracking offset
+    const value = e.target.value.replace(/[\r\n]+/g, '');
+    
     if (value.length <= currentPrompt.length) {
       setTypedText(value);
       typedTextRef.current = value;
@@ -236,33 +230,44 @@ export default function App() {
     }
   };
 
+  const handleKeyDown = (e) => {
+    // BUG FIX: Prevent Enter key and Arrow keys from messing up the hidden cursor
+    if (e.key === 'Enter' || e.key.startsWith('Arrow')) {
+      e.preventDefault();
+    }
+  };
+
+  const forceCursorToEnd = (e) => {
+    // BUG FIX: If they click the text area, force the cursor to the end of the text
+    const len = typedTextRef.current.length;
+    e.target.setSelectionRange(len, len);
+  };
+
   // Check for prompt completion
   useEffect(() => {
-    if (typedText.length === currentPrompt.length && currentPrompt.length > 0) {
+    if (typedText.length === currentPrompt.length && currentPrompt.length > 0 && !showStatsModal) {
       finishPrompt();
     }
-  }, [typedText]);
+  }, [typedText, currentPrompt.length, showStatsModal]);
 
   const finishPrompt = () => {
-    // Calculate stats
     let correctChars = 0;
     for (let i = 0; i < currentPrompt.length; i++) {
-      if (typedText[i] === currentPrompt[i]) correctChars++;
+      if (typedText[i] === currentPrompt[i]) {
+        correctChars++;
+      }
     }
 
     const accuracy = Math.round((correctChars / currentPrompt.length) * 100);
-    const minutes = promptActiveSeconds / 60 || 1/60; // Prevent divide by zero
-    // Standard WPM: (characters / 5) / minutes
-    const wpm = Math.round((currentPrompt.length / 5) / minutes);
+    const minutesActive = promptActiveSeconds / 60;
+    const wordsTyped = currentPrompt.length / 5;
+    
+    let wpm = 0;
+    if (minutesActive > 0) {
+      wpm = Math.round(wordsTyped / minutesActive);
+    }
 
-    const stats = {
-      promptNumber: history.length + 1,
-      wpm,
-      accuracy,
-      timeSeconds: promptActiveSeconds,
-      date: new Date().toLocaleString()
-    };
-
+    const stats = { accuracy, wpm, timeSeconds: promptActiveSeconds };
     setLastStats(stats);
     setHistory([...history, stats]);
     setShowStatsModal(true);
@@ -278,6 +283,7 @@ export default function App() {
     setCurrentPromptIndex(nextIndex);
     setTypedText('');
     typedTextRef.current = '';
+    if (inputRef.current) inputRef.current.value = ''; // Hard clear the DOM
     setPromptActiveSeconds(0);
     setShowStatsModal(false);
     setTimeout(() => {
@@ -292,44 +298,39 @@ export default function App() {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  const downloadReport = () => {
-    const avgWpm = history.length ? Math.round(history.reduce((sum, h) => sum + h.wpm, 0) / history.length) : 0;
-    const avgAcc = history.length ? Math.round(history.reduce((sum, h) => sum + h.accuracy, 0) / history.length) : 0;
+  const getSessionWPM = () => {
+    if (history.length === 0) return 0;
+    const totalWpm = history.reduce((sum, item) => sum + item.wpm, 0);
+    return Math.round(totalWpm / history.length);
+  };
 
-    let reportContent = `TYPING PRACTICE REPORT\n`;
-    reportContent += `======================\n\n`;
-    reportContent += `Student: ${studentName}\n`;
-    reportContent += `Date: ${new Date().toLocaleDateString()}\n`;
-    reportContent += `Total Active Typing Time: ${formatTime(totalActiveSeconds)}\n`;
-    reportContent += `Goal Progress: ${Math.min(100, Math.round((totalActiveSeconds / GOAL_SECONDS) * 100))}% of ${GOAL_MINUTES} minutes\n\n`;
-    reportContent += `OVERALL AVERAGES\n`;
-    reportContent += `----------------\n`;
-    reportContent += `Average WPM: ${avgWpm}\n`;
-    reportContent += `Average Accuracy: ${avgAcc}%\n\n`;
-    reportContent += `SESSION HISTORY\n`;
-    reportContent += `---------------\n`;
-    
-    if (history.length === 0) {
-      reportContent += `No prompts completed yet.\n`;
-    } else {
-      history.forEach((h, i) => {
-        reportContent += `Prompt ${i + 1} - WPM: ${h.wpm} | Accuracy: ${h.accuracy}% | Time: ${formatTime(h.timeSeconds)}\n`;
-      });
-    }
+  const getSessionAccuracy = () => {
+    if (history.length === 0) return 0;
+    const totalAcc = history.reduce((sum, item) => sum + item.accuracy, 0);
+    return Math.round(totalAcc / history.length);
+  };
 
-    const blob = new Blob([reportContent], { type: 'text/plain' });
+  const handleExportData = () => {
+    const data = {
+      studentName,
+      date: new Date().toLocaleDateString(),
+      totalActiveMinutes: (totalActiveSeconds / 60).toFixed(1),
+      paragraphsCompleted: history.length,
+      averageWPM: getSessionWPM(),
+      averageAccuracy: getSessionAccuracy(),
+      sessionHistory: history
+    };
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = `${studentName.replace(/\s+/g, '_')}_Typing_Report.txt`;
-    document.body.appendChild(a);
+    a.download = `${studentName.replace(/\s+/g, '_')}_Typing_Data.json`;
     a.click();
-    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
 
   // --- RENDERERS ---
-
   if (isRestoring) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -344,65 +345,88 @@ export default function App() {
   if (!isStarted) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
-          <div className="bg-blue-100 text-blue-600 p-4 rounded-full inline-block mb-6">
-            <Keyboard size={48} />
+        <div className="bg-white rounded-3xl shadow-xl p-8 max-w-md w-full border border-slate-100">
+          <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+            <Keyboard size={32} />
           </div>
-          <h1 className="text-3xl font-bold text-slate-800 mb-2">Typing Explorer</h1>
-          <p className="text-slate-500 mb-8">Ready to boost your typing skills? Let's aim for 20 minutes of solid practice today!</p>
+          <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Typing Practice</h1>
+          <p className="text-center text-slate-500 mb-8">Ready to reach your 20-minute daily goal?</p>
           
-          <form onSubmit={(e) => { e.preventDefault(); if (studentName.trim()) setIsStarted(true); }} className="space-y-4">
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
-              <input
-                type="text"
-                placeholder="Enter your first name..."
-                value={studentName}
-                onChange={(e) => setStudentName(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all text-lg"
-                autoFocus
-                required
-              />
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Student Name</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <User size={18} />
+                </div>
+                <input 
+                  type="text" 
+                  className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  placeholder="Enter your first and last name..."
+                  value={studentName}
+                  onChange={(e) => setStudentName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && studentName.trim()) {
+                      setIsStarted(true);
+                      setTimeout(() => inputRef.current?.focus(), 100);
+                    }
+                  }}
+                />
+              </div>
             </div>
-            <button
-              type="submit"
+            <button 
+              className={`w-full py-3 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2
+                ${studentName.trim() ? 'bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-200' : 'bg-slate-300 cursor-not-allowed'}`}
+              onClick={() => {
+                if (studentName.trim()) {
+                  setIsStarted(true);
+                  setTimeout(() => inputRef.current?.focus(), 100);
+                }
+              }}
               disabled={!studentName.trim()}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-semibold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 text-lg shadow-sm"
             >
-              Start Typing <Play size={20} />
+              <Play size={18} /> Start Session
             </button>
-          </form>
+          </div>
         </div>
       </div>
     );
   }
 
-  const progressPercent = Math.min(100, (totalActiveSeconds / GOAL_SECONDS) * 100);
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row justify-between items-center gap-4 sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <div className="bg-blue-600 text-white p-2 rounded-lg">
-            <Keyboard size={24} />
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-200 text-slate-800">
+      {/* Header Bar */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-600 text-white p-2 rounded-lg">
+              <Keyboard size={20} />
+            </div>
+            <div>
+              <h1 className="font-bold text-lg leading-tight">Typing Practice</h1>
+              <p className="text-xs text-slate-500 font-medium">{studentName}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-bold text-xl leading-tight">Typing Explorer</h1>
-            <p className="text-sm text-slate-500">Student: {studentName}</p>
+          
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2 bg-slate-100 px-4 py-2 rounded-lg">
+              <div className={`w-2 h-2 rounded-full ${isCurrentlyTyping ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></div>
+              <Clock size={16} className="text-slate-500" />
+              <span className="font-mono font-semibold text-slate-700 tracking-wide">
+                {formatTime(totalActiveSeconds)}
+              </span>
+            </div>
+            
+            <button 
+              onClick={handleExportData}
+              className="flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-blue-600 transition-colors bg-white border border-slate-200 hover:border-blue-200 px-4 py-2 rounded-lg"
+            >
+              <Download size={16} /> Export Data
+            </button>
           </div>
         </div>
-
-        <button
-          onClick={downloadReport}
-          className="flex items-center gap-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 py-2 px-4 rounded-lg transition-colors"
-        >
-          <Download size={18} />
-          Download Report
-        </button>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 max-w-5xl w-full mx-auto p-6 flex flex-col gap-6">
         
         {/* Progress Section */}
@@ -425,83 +449,76 @@ export default function App() {
               </div>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-bold font-mono flex items-center justify-end gap-2">
-                {isCurrentlyTyping && <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span>}
-                {!isCurrentlyTyping && <span className="w-3 h-3 bg-slate-300 rounded-full"></span>}
-                {formatTime(totalActiveSeconds)}
-              </div>
-              <p className="text-xs text-slate-400">Active Typing Time</p>
+              <span className="text-3xl font-bold text-blue-600">{Math.floor(totalActiveSeconds / 60)}</span>
+              <span className="text-slate-500 font-medium ml-1">/ {GOAL_MINUTES} min</span>
             </div>
           </div>
           
-          {/* Progress Bar */}
-          <div className="h-4 bg-slate-100 rounded-full overflow-hidden relative">
+          <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden">
             <div 
-              className="absolute top-0 left-0 h-full bg-blue-500 transition-all duration-1000 ease-linear rounded-full"
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-          <div className="flex justify-between mt-2 text-xs font-medium text-slate-400">
-            <span>0 min</span>
-            <span>10 min</span>
-            <span className={progressPercent >= 100 ? 'text-green-500' : ''}>20 min</span>
+              className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-1000 ease-out"
+              style={{ width: `${Math.min(100, (totalActiveSeconds / (GOAL_MINUTES * 60)) * 100)}%` }}
+            ></div>
           </div>
         </section>
 
-        {/* Typing Interface */}
+        {/* Typing Area */}
         <section 
-          ref={promptContainerRef}
-          className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 flex-1 relative overflow-hidden group cursor-text"
+          className={`flex-1 bg-white rounded-2xl shadow-sm border p-8 relative flex flex-col transition-colors
+            ${isFocused ? 'border-blue-400 ring-4 ring-blue-50' : 'border-slate-200'}
+            ${showStatsModal ? 'opacity-50 pointer-events-none' : ''}
+          `}
           onClick={() => inputRef.current?.focus()}
         >
-          {/* Hidden Input Layer */}
+          {/* Hidden Textarea */}
           <textarea
             ref={inputRef}
             value={typedText}
             onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            onPaste={(e) => e.preventDefault()}
-            className="absolute opacity-0 w-0 h-0 p-0 m-0 overflow-hidden"
-            autoFocus
+            onSelect={forceCursorToEnd}
+            onClick={forceCursorToEnd}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-default resize-none z-10"
             spellCheck="false"
             autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            disabled={showStatsModal}
           />
 
-          {/* Blur Overlay if not focused */}
           {!isFocused && !showStatsModal && (
-            <div className="absolute inset-0 z-10 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center transition-all">
-              <div className="bg-slate-800 text-white px-6 py-3 rounded-full flex items-center gap-3 shadow-lg animate-bounce">
-                <AlertCircle size={20} />
-                <span className="font-medium">Click here to start/resume typing</span>
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-sm rounded-2xl">
+              <div className="bg-slate-800 text-white px-6 py-3 rounded-xl font-medium shadow-xl flex items-center gap-3 animate-bounce">
+                <Keyboard size={20} /> Click here to start typing
               </div>
             </div>
           )}
 
-          {/* Typing Text Display */}
           <div 
-            className={`font-mono text-2xl leading-[2.5] tracking-wide transition-opacity ${!isFocused && !showStatsModal ? 'opacity-30' : 'opacity-100'}`}
-            style={{ wordBreak: 'break-word' }}
+            ref={promptContainerRef}
+            className="text-2xl leading-relaxed font-mono tracking-wide text-slate-400 select-none"
           >
             {currentPrompt.split('').map((char, index) => {
-              let colorClass = 'text-slate-400';
-              let bgClass = 'bg-transparent';
-              let isError = false;
+              let colorClass = '';
+              let bgClass = '';
+              let cursorClass = '';
+              const isCursor = index === typedText.length;
+              const isError = index < typedText.length && typedText[index] !== char;
 
               if (index < typedText.length) {
                 if (typedText[index] === char) {
-                  colorClass = 'text-emerald-600 font-semibold';
+                  colorClass = 'text-slate-800'; // Correctly typed
                 } else {
-                  colorClass = 'text-red-600 font-semibold';
+                  colorClass = 'text-red-500'; // Incorrectly typed
                   bgClass = 'bg-red-100 rounded-sm';
-                  isError = true;
                 }
               }
 
-              const isCursor = index === typedText.length && isFocused;
-              const cursorClass = isCursor 
-                ? 'border-l-2 border-blue-500 bg-blue-50 text-slate-800 animate-[pulse_1s_ease-in-out_infinite] -ml-[2px] pl-[2px]' 
-                : '';
+              if (isCursor && isFocused) {
+                cursorClass = 'relative before:absolute before:left-0 before:-top-1 before:-bottom-1 before:w-[2px] before:bg-blue-500 before:animate-pulse';
+              }
 
               // Ensure spaces are visible when they are errors or the cursor is on them
               const displayChar = char === ' ' && (isError || isCursor) ? '\u00A0' : char;
@@ -517,55 +534,75 @@ export default function App() {
             })}
           </div>
 
-          <div className="mt-8 flex justify-between items-center text-sm text-slate-500 border-t border-slate-100 pt-4">
+          <div className="mt-auto pt-8 flex justify-between items-center text-sm text-slate-500 border-t border-slate-100">
             <div className="flex gap-4">
               <span>Paragraph {history.length + 1}</span>
               <span>•</span>
               <span>{Math.round((typedText.length / currentPrompt.length) * 100)}% Complete</span>
             </div>
             <button 
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation(); // Prevent focusing the main area
                 setTypedText('');
                 typedTextRef.current = '';
+                if (inputRef.current) inputRef.current.value = ''; // BUG FIX: Hard clear the DOM element
                 setPromptActiveSeconds(0);
                 setTimeout(() => inputRef.current?.focus(), 50);
               }}
-              className="text-slate-400 hover:text-slate-600 transition-colors"
+              className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded-lg transition-colors relative z-30"
             >
               Restart Paragraph
             </button>
           </div>
         </section>
+
+        {/* Dashboard/Stats */}
+        {history.length > 0 && (
+          <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex items-center justify-around">
+            <div className="text-center">
+              <p className="text-sm text-slate-500 font-medium mb-1">Session Avg WPM</p>
+              <p className="text-2xl font-bold text-slate-800">{getSessionWPM()}</p>
+            </div>
+            <div className="w-px h-12 bg-slate-200"></div>
+            <div className="text-center">
+              <p className="text-sm text-slate-500 font-medium mb-1">Session Accuracy</p>
+              <p className="text-2xl font-bold text-slate-800">{getSessionAccuracy()}%</p>
+            </div>
+            <div className="w-px h-12 bg-slate-200"></div>
+            <div className="text-center">
+              <p className="text-sm text-slate-500 font-medium mb-1">Paragraphs Done</p>
+              <p className="text-2xl font-bold text-slate-800">{history.length}</p>
+            </div>
+          </section>
+        )}
       </main>
 
-      {/* Stats Modal */}
+      {/* Completion Modal */}
       {showStatsModal && lastStats && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full animate-in fade-in zoom-in duration-300">
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 bg-green-100 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Trophy size={32} />
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full border border-slate-100 transform transition-all scale-100">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+              <Trophy size={32} />
+            </div>
+            
+            <h2 className="text-2xl font-bold text-center text-slate-800 mb-6">Paragraph Complete!</h2>
+            
+            <div className="space-y-4 mb-8">
+              <div className="bg-slate-50 p-4 rounded-xl flex justify-between items-center border border-slate-100">
+                <span className="text-slate-500 font-medium">Speed</span>
+                <span className="text-xl font-bold text-slate-800">{lastStats.wpm} WPM</span>
               </div>
-              <h2 className="text-2xl font-bold text-slate-800">Great Job!</h2>
-              <p className="text-slate-500">You completed the paragraph.</p>
+              <div className="bg-slate-50 p-4 rounded-xl flex justify-between items-center border border-slate-100">
+                <span className="text-slate-500 font-medium">Accuracy</span>
+                <span className="text-xl font-bold text-slate-800">{lastStats.accuracy}%</span>
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 mb-8">
-              <div className="bg-slate-50 p-4 rounded-2xl text-center border border-slate-100">
-                <div className="text-3xl font-black text-blue-600 mb-1">{lastStats.wpm}</div>
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">WPM</div>
-              </div>
-              <div className="bg-slate-50 p-4 rounded-2xl text-center border border-slate-100">
-                <div className="text-3xl font-black text-emerald-600 mb-1">{lastStats.accuracy}%</div>
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Accuracy</div>
-              </div>
-            </div>
-
-            <button
+            <button 
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-semibold transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
               onClick={nextPrompt}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
             >
-              Next Paragraph <CheckCircle2 size={20} />
+              Next Paragraph <Play size={16} fill="currentColor" />
             </button>
           </div>
         </div>
