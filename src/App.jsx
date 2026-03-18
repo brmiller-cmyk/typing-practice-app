@@ -57,12 +57,12 @@ const FALLBACK_PROMPTS = [
   "In ancient Egypt, the Nile River was the center of life. It provided water for drinking, fertile soil for farming, and a highway for transportation. Every year, the river would flood, leaving behind rich, dark soil perfect for growing crops like wheat and flax. The Egyptians built incredible monuments, such as the pyramids and the Sphinx, which still stand today as a testament to their advanced engineering skills."
 ];
 
-const GOAL_MINUTES = 20;
 const INACTIVITY_DELAY_MS = 2000;
 
 export default function App() {
   // User & App State
   const [studentName, setStudentName] = useState('');
+  const [goalMinutes, setGoalMinutes] = useState(20);
   const [isStarted, setIsStarted] = useState(false);
   
   // Firebase User & Save State
@@ -94,11 +94,12 @@ export default function App() {
   const typedTextRef = useRef('');
 
   const currentPrompt = prompts.length > 0 ? prompts[currentPromptIndex % prompts.length] : "Loading prompts...";
+  const safeGoalMinutes = Number(goalMinutes) || 20;
 
   // --- EXTERNAL PROMPTS LOGIC ---
   useEffect(() => {
     // Fetch prompts from the external text file.
-    // TIP: To update without redeploying, change this URL to a raw GitHub Gist or JSONBin URL!
+    // By removing the commit hash from the URL, it will always fetch the latest version!
     fetch('https://gist.githubusercontent.com/brmiller-cmyk/e5cc5687068bbf0820cc7853b009ddb1/raw/prompts.json')
       .then(res => {
         if (!res.ok) throw new Error("File not found");
@@ -159,6 +160,7 @@ export default function App() {
         const today = new Date().toLocaleDateString();
 
         if (data.studentName) setStudentName(data.studentName);
+        if (data.goalMinutes !== undefined) setGoalMinutes(data.goalMinutes);
 
         // DAILY RESET LOGIC: Only restore typing progress if they saved it today
         if (data.lastActiveDate === today) {
@@ -192,6 +194,7 @@ export default function App() {
         const userRef = doc(db, 'artifacts', appId, 'users', user.uid, 'saves', 'progress');
         await setDoc(userRef, {
           studentName,
+          goalMinutes: safeGoalMinutes,
           isStarted,
           totalActiveSeconds,
           promptActiveSeconds,
@@ -212,7 +215,7 @@ export default function App() {
 
     const timeoutId = setTimeout(saveProgress, 1000);
     return () => clearTimeout(timeoutId);
-  }, [user, studentName, isStarted, totalActiveSeconds, promptActiveSeconds, typedText, history, currentPromptIndex, isRestoring]);
+  }, [user, studentName, goalMinutes, isStarted, totalActiveSeconds, promptActiveSeconds, typedText, history, currentPromptIndex, isRestoring]);
 
   // --- TIMER LOGIC ---
   useEffect(() => {
@@ -380,12 +383,12 @@ export default function App() {
             <Keyboard size={32} />
           </div>
           <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Typing Practice</h1>
-          <p className="text-center text-slate-500 mb-8">Ready to reach your 20-minute daily goal?</p>
+          <p className="text-center text-slate-500 mb-8">Ready to reach your daily goal?</p>
           
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Student Name</label>
-              <div className="relative">
+              <div className="relative mb-4">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                   <User size={18} />
                 </div>
@@ -403,9 +406,25 @@ export default function App() {
                   }}
                 />
               </div>
+
+              <label className="block text-sm font-medium text-slate-700 mb-1">Daily Goal (Minutes)</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                  <Target size={18} />
+                </div>
+                <input 
+                  type="number" 
+                  min="1"
+                  max="120"
+                  className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  value={goalMinutes}
+                  onChange={(e) => setGoalMinutes(e.target.value === '' ? '' : Number(e.target.value))}
+                  onBlur={(e) => !e.target.value && setGoalMinutes(20)}
+                />
+              </div>
             </div>
             <button 
-              className={`w-full py-3 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2
+              className={`w-full py-3 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 mt-4
                 ${studentName.trim() ? 'bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-200' : 'bg-slate-300 cursor-not-allowed'}`}
               onClick={() => {
                 if (studentName.trim()) {
@@ -475,7 +494,17 @@ export default function App() {
             <div>
               <h2 className="text-lg font-semibold flex items-center gap-2">
                 <Target size={20} className="text-blue-500" /> 
-                Daily Goal: 20 Minutes
+                Daily Goal: 
+                <input 
+                  type="number"
+                  min="1"
+                  max="120"
+                  value={goalMinutes}
+                  onChange={(e) => setGoalMinutes(e.target.value === '' ? '' : Number(e.target.value))}
+                  onBlur={(e) => !e.target.value && setGoalMinutes(20)}
+                  className="w-16 bg-slate-50 border border-slate-200 rounded-md px-2 py-0.5 text-center focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                />
+                Minutes
               </h2>
               <div className="flex items-center gap-3 mt-1">
                 <p className="text-sm text-slate-500">
@@ -490,14 +519,14 @@ export default function App() {
             </div>
             <div className="text-right">
               <span className="text-3xl font-bold text-blue-600">{Math.floor(totalActiveSeconds / 60)}</span>
-              <span className="text-slate-500 font-medium ml-1">/ {GOAL_MINUTES} min</span>
+              <span className="text-slate-500 font-medium ml-1">/ {safeGoalMinutes} min</span>
             </div>
           </div>
           
           <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden">
             <div 
               className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-1000 ease-out"
-              style={{ width: `${Math.min(100, (totalActiveSeconds / (GOAL_MINUTES * 60)) * 100)}%` }}
+              style={{ width: `${Math.min(100, (totalActiveSeconds / (safeGoalMinutes * 60)) * 100)}%` }}
             ></div>
           </div>
         </section>
