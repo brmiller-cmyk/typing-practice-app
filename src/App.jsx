@@ -42,7 +42,7 @@ if (configStr) {
   };
   
   if (externalConfig.apiKey !== "YOUR_API_KEY" && externalConfig.apiKey !== undefined) {
-    app = initializeApp(externalConfig);
+    app = initializeApp(externalConfig);S
     auth = getAuth(app);
     db = getFirestore(app);
     isFirebaseEnabled = true;
@@ -99,7 +99,7 @@ export default function App() {
   useEffect(() => {
     // Fetch prompts from the external text file.
     // TIP: To update without redeploying, change this URL to a raw GitHub Gist or JSONBin URL!
-    fetch('/prompts.json')
+    fetch('https://gist.githubusercontent.com/brmiller-cmyk/e5cc5687068bbf0820cc7853b009ddb1/raw/c47da09d2b731a1cc3e6e2a1c1cf626c459a3d7f/prompts.json')
       .then(res => {
         if (!res.ok) throw new Error("File not found");
         return res.json();
