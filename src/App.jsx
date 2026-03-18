@@ -42,7 +42,7 @@ if (configStr) {
   };
   
   if (externalConfig.apiKey !== "YOUR_API_KEY" && externalConfig.apiKey !== undefined) {
-    app = initializeApp(externalConfig);S
+    app = initializeApp(externalConfig);
     auth = getAuth(app);
     db = getFirestore(app);
     isFirebaseEnabled = true;
