@@ -330,21 +330,33 @@ export default function App() {
   };
 
   const handleExportData = () => {
-    const data = {
-      studentName,
-      date: new Date().toLocaleDateString(),
-      totalActiveMinutes: (totalActiveSeconds / 60).toFixed(1),
-      paragraphsCompleted: history.length,
-      averageWPM: getSessionWPM(),
-      averageAccuracy: getSessionAccuracy(),
-      sessionHistory: history
-    };
+    let textContent = `Typing Practice Session Report\n`;
+    textContent += `==============================\n`;
+    textContent += `Student Name: ${studentName}\n`;
+    textContent += `Date: ${new Date().toLocaleDateString()}\n\n`;
+    
+    textContent += `Summary:\n`;
+    textContent += `------------------------------\n`;
+    textContent += `Total Active Time: ${(totalActiveSeconds / 60).toFixed(1)} minutes\n`;
+    textContent += `Paragraphs Completed: ${history.length}\n`;
+    textContent += `Average WPM: ${getSessionWPM()}\n`;
+    textContent += `Average Accuracy: ${getSessionAccuracy()}%\n\n`;
 
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    textContent += `Session History:\n`;
+    textContent += `------------------------------\n`;
+    if (history.length === 0) {
+      textContent += `No paragraphs completed yet.\n`;
+    } else {
+      history.forEach((session, index) => {
+        textContent += `Paragraph ${index + 1}: ${session.wpm} WPM | ${session.accuracy}% Accuracy | ${session.timeSeconds} seconds\n`;
+      });
+    }
+
+    const blob = new Blob([textContent], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${studentName.replace(/\s+/g, '_')}_Typing_Data.json`;
+    a.download = `${studentName.replace(/\s+/g, '_')}_Typing_Data.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
